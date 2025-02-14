@@ -6,6 +6,7 @@
 class MetasploitModule < Msf::Auxiliary
     include Msf::Auxiliary::Report
     include Msf::Auxiliary::Scanner
+    include Msf::Auxiliary::AuthBrute
   
     def initialize
       super(
@@ -13,7 +14,7 @@ class MetasploitModule < Msf::Auxiliary
         'Description'    => 'This module attempts to brute-force the password of SIP extensions already enumerated in the Metasploit database (use first auxiliary/scanner/sip/enumerator, extensions will be stored as notes).',
         'Author'         => 'ƀr!сКё∂',
         'License'        => MSF_LICENSE,
-        'References'     =>
+               'References'     =>
           [
             ['URL', 'https://github.com/rapid7/metasploit-framework']
           ],
@@ -21,15 +22,33 @@ class MetasploitModule < Msf::Auxiliary
           {
             'RPORT' => 5060,
             'CPORT' => 5065,
-            'THROTTLE' => 1 # Default throttle delay in seconds
+            'THROTTLE' => 1, # Default throttle delay in seconds
+            'BRUTEFORCE_SPEED' => 5, # Default brute-force speed
+            'STOP_ON_SUCCESS' => false, # Stop on first successful login
+            'VERBOSE' => true # Print output for all attempts
           }
       )
   
       register_options(
         [
-          OptPath.new('PASS_FILE', [true, 'File containing passwords, one per line', '~/SIP_Pass.txt']),
+          OptPath.new('PASS_FILE', [false, 'File containing passwords, one per line', '~/SIP_Pass.txt']),
+          OptPath.new('USER_FILE', [false, 'File containing usernames, one per line']),
+          OptPath.new('USERPASS_FILE', [false, 'File containing users and passwords separated by space, one pair per line']),
+          OptString.new('USERNAME', [false, 'A specific username to authenticate as']),
+          OptString.new('PASSWORD', [false, 'A specific password to authenticate with']),
           OptBool.new('DB_ALL_NOTES_EXTENSIONS', [true, 'Fetch SIP extensions from notes for the target IP', true]),
-          OptInt.new('THROTTLE', [true, 'Throttle delay between requests (in seconds)', 1])
+          OptBool.new('DB_ALL_CREDS', [false, 'Try each user/password couple stored in the current database']),
+          OptBool.new('DB_ALL_USERS', [false, 'Add all users in the current database to the list']),
+          OptBool.new('DB_ALL_PASS', [false, 'Add all passwords in the current database to the list']),
+          OptBool.new('USER_AS_PASS', [false, 'Try the username as the password for all users']),
+          OptBool.new('BLANK_PASSWORDS', [false, 'Try blank passwords for all users']),
+          OptBool.new('ANONYMOUS_LOGIN', [false, 'Attempt to login with a blank username and password']),
+          OptEnum.new('DB_SKIP_EXISTING', [false, 'Skip existing credentials stored in the current database', 'none', ['none', 'user', 'user&realm']]),
+          OptInt.new('THROTTLE', [true, 'Throttle delay between requests (in seconds)', 1]),
+          OptInt.new('BRUTEFORCE_SPEED', [true, 'How fast to bruteforce, from 0 to 5', 5]),
+          OptInt.new('THREADS', [true, 'The number of concurrent threads (max one per host)', 1]),
+          OptBool.new('STOP_ON_SUCCESS', [true, 'Stop guessing when a credential works for a host', false]),
+          OptBool.new('VERBOSE', [true, 'Whether to print output for all attempts', true])
         ]
       )
     end
